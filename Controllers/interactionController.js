@@ -3,16 +3,15 @@ const slackClient = require("../utils/slackClient");
 
 const handleInteraction = async (req, res) => {
   const payload = JSON.parse(req.body.payload);
-  console.log(" Interaction Payload:", payload);
+  console.log("🔄 Interaction Payload:", JSON.stringify(payload, null, 2));
 
-  //  Handle modal submission
+  // 🟢 Handle modal submission
   if (payload.type === 'view_submission') {
     const approverId = payload.view.state.values.approver.approver_select.selected_user;
     const details = payload.view.state.values.details.request_details.value;
     const requesterId = payload.user.id;
 
     try {
-      // Save to DB
       const newRequest = await ApprovalRequest.create({
         requesterId,
         approverId,
@@ -20,7 +19,8 @@ const handleInteraction = async (req, res) => {
         status: "pending"
       });
 
-      // Send approval message to approver
+      console.log("✅ Request saved to DB:", newRequest);
+
       const dm = await slackClient.conversations.open({ users: approverId });
       const dmChannel = dm.channel.id;
 
@@ -41,20 +41,14 @@ const handleInteraction = async (req, res) => {
             elements: [
               {
                 type: "button",
-                text: {
-                  type: "plain_text",
-                  text: "✅ Approve"
-                },
+                text: { type: "plain_text", text: "✅ Approve" },
                 style: "primary",
                 value: newRequest._id.toString(),
                 action_id: "approve_action"
               },
               {
                 type: "button",
-                text: {
-                  type: "plain_text",
-                  text: "❌ Reject"
-                },
+                text: { type: "plain_text", text: "❌ Reject" },
                 style: "danger",
                 value: newRequest._id.toString(),
                 action_id: "reject_action"
@@ -64,14 +58,14 @@ const handleInteraction = async (req, res) => {
         ]
       });
 
-      return res.status(200).send(); // Success
+      return res.status(200).send(); // success
     } catch (err) {
-      console.error("❌ Modal submission error:", err);
+      console.error("❌ Error during modal submission DB save:", err);
       return res.status(500).send();
     }
   }
 
-  // 🔹 Handle Approve / Reject button clicks
+  // 🔴 Handle Approve / Reject button clicks
   if (payload.type === 'block_actions') {
     const action = payload.actions[0];
     const requestId = action.value;
@@ -81,13 +75,14 @@ const handleInteraction = async (req, res) => {
     try {
       const request = await ApprovalRequest.findById(requestId);
       if (!request) {
+        console.warn("⚠️ Request not found with ID:", requestId);
         return res.status(404).send({ text: 'Request not found.' });
       }
 
       request.status = decision;
       await request.save();
+      console.log(`✅ Request ID ${requestId} marked as "${decision}"`);
 
-      // Notify requester
       const dm = await slackClient.conversations.open({ users: request.requesterId });
       const requesterChannel = dm.channel.id;
 
@@ -96,7 +91,6 @@ const handleInteraction = async (req, res) => {
         text: `Your request has been *${decision}* by <@${approverId}>.\n\n📋 *Details:*\n${request.details}`
       });
 
-      // Update message in approver's DM
       await slackClient.chat.update({
         channel: payload.channel.id,
         ts: payload.message.ts,
@@ -106,7 +100,7 @@ const handleInteraction = async (req, res) => {
 
       return res.status(200).send();
     } catch (error) {
-      console.error("❌ Button handling error:", error);
+      console.error("❌ Error handling approval/rejection:", error);
       return res.status(500).send();
     }
   }
